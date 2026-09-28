@@ -1,15 +1,15 @@
-import { DeepgramClient } from '@deepgram/sdk';
-import { WebSocket } from 'ws';
+import { createClient, LiveTranscriptionEvents } from '@deepgram/sdk';
 
-let deepgramClient: InstanceType<typeof DeepgramClient> | null = null;
+let deepgramClient: ReturnType<typeof createClient> | null = null;
 
-function getDeepgramClient(): InstanceType<typeof DeepgramClient> {
+function getDeepgramClient() {
   if (!deepgramClient) {
     const apiKey = process.env.DEEPGRAM_API_KEY || '';
     if (!apiKey) {
+      console.error('❌ DEEPGRAM_API_KEY is missing in environment variables!');
       throw new Error('DEEPGRAM_API_KEY not set in environment');
     }
-    deepgramClient = new DeepgramClient({ apiKey } as any);
+    deepgramClient = createClient(apiKey);
   }
   return deepgramClient;
 }
@@ -33,59 +33,59 @@ export class DeepgramSTT {
 
   private connect(): void {
     if (this.stopped) return;
+
     try {
       const dg = getDeepgramClient();
-      (dg.listen as any).v1.createConnection({
+
+      // Deepgram SDK v3 live streaming method
+      const liveConnection = dg.listen.live({
         model: 'nova-2',
         smart_format: true,
         interim_results: true,
         endpointing: 500,
         encoding: 'linear16',
-        sample_rate: 16000
-      } as any).then((socket: any) => {
+        sample_rate: 16000,
+      });
+
+      this.connection = liveConnection;
+
+      liveConnection.on(LiveTranscriptionEvents.Open, () => {
         if (this.stopped) {
-          try { socket.close(); } catch { /* already closed */ }
+          try { liveConnection.finish(); } catch { /* ignore */ }
           return;
         }
-        this.connection = socket;
+        this.connected = true;
+        this.reconnectAttempts = 0;
+        console.log('🎤 Deepgram STT connected successfully');
+        this.flushPendingAudio();
+      });
 
-        socket.on('open', () => {
-          this.connected = true;
-          this.reconnectAttempts = 0;
-          console.log('Deepgram STT connected');
-          this.flushPendingAudio();
-        });
+      liveConnection.on(LiveTranscriptionEvents.Transcript, (data: any) => {
+        if (data.channel?.alternatives?.length > 0) {
+          const transcript = data.channel.alternatives[0].transcript;
+          const isFinal = Boolean(data.is_final);
+          const speechFinal = Boolean(data.speech_final ?? isFinal);
 
-        socket.on('message', (data: any) => {
-          if (data.channel?.alternatives?.length > 0) {
-            const transcript = data.channel.alternatives[0].transcript;
-            const isFinal = data.is_final;
-            const speechFinal = data.speech_final ?? isFinal;
-            if (transcript && this.onTranscriptCallback) {
-              this.onTranscriptCallback(transcript, isFinal, speechFinal);
-            }
+          if (transcript && this.onTranscriptCallback) {
+            this.onTranscriptCallback(transcript, isFinal, speechFinal);
           }
-        });
+        }
+      });
 
-        socket.on('error', (error: any) => {
-          console.error('Deepgram STT error:', error);
-        });
+      liveConnection.on(LiveTranscriptionEvents.Error, (error: any) => {
+        console.error('❌ Deepgram STT error:', error);
+      });
 
-        socket.on('close', () => {
-          if (this.connection !== socket) return;
-          this.connected = false;
-          this.connection = null;
-          console.warn('Deepgram STT connection closed');
-          this.scheduleReconnect();
-        });
-
-        socket.connect();
-      }).catch((error: any) => {
-        console.error('Failed to start Deepgram STT:', error);
+      liveConnection.on(LiveTranscriptionEvents.Close, () => {
+        if (this.connection !== liveConnection) return;
+        this.connected = false;
+        this.connection = null;
+        console.warn('🎤 Deepgram STT connection closed');
         this.scheduleReconnect();
       });
+
     } catch (error) {
-      console.error('Failed to start Deepgram STT:', error);
+      console.error('❌ Failed to start Deepgram STT:', error);
       this.scheduleReconnect();
     }
   }
@@ -93,12 +93,12 @@ export class DeepgramSTT {
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer) return;
     if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-      console.error('Deepgram STT reconnect gave up after max attempts');
+      console.error('❌ Deepgram STT reconnect gave up after max attempts');
       return;
     }
     this.reconnectAttempts++;
-    const delay = Math.min(500 * 2 ** (this.reconnectAttempts - 1), 8000);
-    console.log(`Deepgram STT reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+    const delay = Math.min(500 * Math.pow(2, this.reconnectAttempts - 1), 8000);
+    console.log(`🔄 Deepgram STT reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
@@ -108,19 +108,19 @@ export class DeepgramSTT {
   private flushPendingAudio(): void {
     if (!this.pendingAudio.length) return;
     const queued = this.pendingAudio.splice(0);
-    for (const chunk of queued) this.sendAudio(chunk);
+    for (const chunk of queued) {
+      this.sendAudio(chunk);
+    }
   }
 
   sendAudio(chunk: Buffer): void {
     if (this.connection && this.connected) {
       try {
-        this.connection.sendMedia(chunk);
+        this.connection.send(chunk);
       } catch (error) {
         console.error('Deepgram STT sendAudio failed:', error);
       }
     } else if (!this.stopped) {
-      // Buffer audio captured while the connection is still opening or
-      // reconnecting so short utterances are not lost.
       this.pendingAudio.push(chunk);
       if (this.pendingAudio.length > MAX_PENDING_AUDIO_CHUNKS) {
         this.pendingAudio.shift();
@@ -141,7 +141,7 @@ export class DeepgramSTT {
     this.pendingAudio = [];
     if (this.connection) {
       try {
-        this.connection.close();
+        this.connection.finish();
       } catch (error) {
         console.error('Deepgram STT close failed:', error);
       }
