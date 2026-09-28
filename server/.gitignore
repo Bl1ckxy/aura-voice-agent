@@ -1,0 +1,19 @@
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Logs
+*.log
+
+# Runtime / temp
+tmp/
+temp/
+*.tmp
