@@ -1,0 +1,67 @@
+# ── Dependencies ──────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ── Build output ──────────────────────────────────────────────
+.next/
+out/
+build/
+dist/
+server/dist/
+
+# ── Tests / coverage ──────────────────────────────────────────
+coverage/
+*.lcov
+.nyc_output/
+
+# ── Environment & secrets (keep .env.example tracked) ────────
+#commits bhi check karna
+.env
+.env.*
+!.env.example
+
+# ── Caches ────────────────────────────────────────────────────
+*.tsbuildinfo
+.next/cache/
+.cache/
+.turbo/
+.eslintcache
+stylelintcache
+
+# ── Logs ──────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.pid
+*.seed
+*.pid.old
+
+# ── Runtime / local data ──────────────────────────────────────
+tmp/
+temp/
+*.tmp
+*.swp
+*.swo
+*~
+
+# ── Editor / IDE ──────────────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+*.iml
+
+# ── Misc ──────────────────────────────────────────────────────
+.vercel
+.netlify
+*.local
