@@ -4,11 +4,18 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { useAudioRecorder } from './useAudioRecorder';
 import { useAudioPlayer } from './useAudioPlayer';
 
+const sanitizeWsUrl = (url: string): string => {
+  // Strip any http/https protocol prefix, then ensure wss://
+  let cleaned = url.trim().replace(/^wss:\/\//, '').replace(/^https:\/\//, '').replace(/^http:\/\//, '').replace(/^ws:\/\//, '');
+  return `wss://${cleaned}`;
+};
+
 const getWsUrl = () => {
   const envUrl = process.env.NEXT_PUBLIC_WS_URL;
   if (envUrl && envUrl.trim() !== '' && !envUrl.includes('localhost')) {
-    console.log("🔌 Connecting via env NEXT_PUBLIC_WS_URL:", envUrl);
-    return envUrl;
+    const wsUrl = sanitizeWsUrl(envUrl);
+    console.log("🔌 Connecting via env NEXT_PUBLIC_WS_URL:", wsUrl);
+    return wsUrl;
   }
   if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
     const railwayWsUrl = "wss://aura-voice-agent-production-380e.up.railway.app/";
