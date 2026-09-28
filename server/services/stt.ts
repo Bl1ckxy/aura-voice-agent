@@ -9,7 +9,7 @@ function getDeepgramClient(): InstanceType<typeof DeepgramClient> {
     if (!apiKey) {
       throw new Error('DEEPGRAM_API_KEY not set in environment');
     }
-    deepgramClient = new DeepgramClient({ apiKey });
+    deepgramClient = new DeepgramClient({ apiKey } as any);
   }
   return deepgramClient;
 }
@@ -35,7 +35,7 @@ export class DeepgramSTT {
     if (this.stopped) return;
     try {
       const dg = getDeepgramClient();
-      dg.listen.v1.createConnection({
+      (dg.listen as any).v1.createConnection({
         model: 'nova-2',
         smart_format: true,
         interim_results: true,
