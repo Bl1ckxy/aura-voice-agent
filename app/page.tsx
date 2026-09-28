@@ -536,9 +536,7 @@ export default function Home() {
       <header className="border-b border-[var(--border)] bg-gradient-to-r from-teal-50 to-white flex-shrink-0">
         <div className="max-w-7xl mx-auto px-4 py-3 sm:px-6 lg:px-8 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-teal-700 flex items-center justify-center shadow-lg shadow-teal-500/25">
-              <span className="text-xl">🌿</span>
-            </div>
+            <img src="/logo.svg" alt="Aura Logo" className="w-16 h-16 rounded-xl shadow-lg shadow-teal-500/25 object-cover" />
             <div>
               <h1 className="text-lg sm:text-xl font-semibold text-gray-900">Aura Skincare</h1>
               <p className="text-xs text-gray-500">AI Voice Support Agent</p>
@@ -548,7 +546,7 @@ export default function Home() {
             </span>
           </div>
           <a
-            href="https://github.com"
+            href="https://github.com/Bl1ckxy/aura-voice-agent.git"
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-gray-400 hover:text-gray-600 transition-colors flex items-center gap-1"

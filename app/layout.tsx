@@ -3,6 +3,9 @@ import './globals.css';
 export const metadata = {
   title: 'Aura Skincare Voice Agent',
   description: 'AI-powered voice support for Aura Skincare',
+  icons: {
+    icon: '/favicon.svg',
+  },
 };
 
 export default function RootLayout({
