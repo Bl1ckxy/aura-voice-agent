@@ -83,6 +83,10 @@ export class DeepgramSTT {
         this.scheduleReconnect();
       });
 
+      // The SDK creates the socket with startClosed: true — it does NOT
+      // auto-connect. Handlers must be registered before this call.
+      socket.connect();
+
     } catch (error) {
       console.error('❌ Failed to start Deepgram STT:', error);
       this.scheduleReconnect();
