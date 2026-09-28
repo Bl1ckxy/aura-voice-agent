@@ -5,7 +5,6 @@ import { useAudioRecorder } from './useAudioRecorder';
 import { useAudioPlayer } from './useAudioPlayer';
 
 const sanitizeWsUrl = (url: string): string => {
-  // Strip any http/https protocol prefix, then ensure wss://
   let cleaned = url.trim().replace(/^wss:\/\//, '').replace(/^https:\/\//, '').replace(/^http:\/\//, '').replace(/^ws:\/\//, '');
   return `wss://${cleaned}`;
 };

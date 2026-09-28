@@ -156,7 +156,7 @@ class VoiceAgentSession {
         return;
       }
 
-      if (!isFinal || !speechFinal) {
+      if (!isFinal && !speechFinal) {
         safeSend(ws, JSON.stringify({ type: 'transcript', speaker: 'customer', text: transcript, isInterim: true }));
         return;
       }

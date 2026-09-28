@@ -33,44 +33,53 @@ export function useAudioRecorder(): AudioRecorderReturn {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
         }
       });
 
       streamRef.current = stream;
-      const nativeSampleRate = 48000;
-      audioContextRef.current = new AudioContext({ sampleRate: nativeSampleRate });
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      const audioCtx = new AudioContextClass();
+      audioContextRef.current = audioCtx;
 
-      if (!workletLoaded.current) {
-        await audioContextRef.current.audioWorklet.addModule('/audio-processor.js');
-        workletLoaded.current = true;
+      // Resume context if browser created it in suspended state
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
       }
 
-      const source = audioContextRef.current.createMediaStreamSource(stream);
+      await audioCtx.audioWorklet.addModule('/audio-processor.js');
+
+      const source = audioCtx.createMediaStreamSource(stream);
       
       // Create analyser node for volume detection (barge-in)
-      analyserRef.current = audioContextRef.current.createAnalyser();
+      analyserRef.current = audioCtx.createAnalyser();
       analyserRef.current.fftSize = 256;
       analyserRef.current.smoothingTimeConstant = 0.3;
       
       // Connect source -> analyser -> processor -> destination
       // This keeps the mic stream alive and allows volume analysis
-      processorRef.current = new AudioWorkletNode(audioContextRef.current, 'pcm-processor', {
+      processorRef.current = new AudioWorkletNode(audioCtx, 'pcm-processor', {
         processorOptions: { targetSampleRate: 16000 }
       });
 
+      let chunkCount = 0;
       (processorRef.current as AudioWorkletNode).port.onmessage = (event) => {
         if (!recordingActiveRef.current) return;
         if (event.data.type === 'pcm' && onAudioChunkRef.current) {
+          chunkCount++;
+          if (chunkCount === 1 || chunkCount % 40 === 0) {
+            console.log(`🎙️ Recording audio chunk #${chunkCount} (${event.data.buffer.byteLength} bytes)`);
+          }
           onAudioChunkRef.current(event.data.buffer);
         }
       };
 
       source.connect(analyserRef.current);
       analyserRef.current.connect(processorRef.current);
-      processorRef.current.connect(audioContextRef.current.destination);
+      processorRef.current.connect(audioCtx.destination);
+      console.log('🎤 Mic recording initialized. AudioContext state:', audioCtx.state, 'sampleRate:', audioCtx.sampleRate);
 
       // Start volume monitoring interval
       volumeCheckIntervalRef.current = setInterval(() => {
