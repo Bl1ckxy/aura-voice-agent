@@ -16,7 +16,7 @@ async function edgeTextToSpeech(text: string): Promise<Buffer> {
   const tts = new MsEdgeTTS();
   try {
     await tts.setMetadata('en-IN-NeerjaNeural', OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-    const { audioStream } = (tts.toStream(text) as { audioStream: Readable; metadataStream: Readable | null });
+    const { audioStream } = (tts.toStream(text) as unknown as { audioStream: Readable; metadataStream: Readable | null });
     return await streamToBuffer(audioStream);
   } finally {
     tts.close();
