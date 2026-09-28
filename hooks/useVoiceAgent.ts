@@ -4,7 +4,20 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { useAudioRecorder } from './useAudioRecorder';
 import { useAudioPlayer } from './useAudioPlayer';
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3002';
+const getWsUrl = () => {
+  const envUrl = process.env.NEXT_PUBLIC_WS_URL;
+  if (envUrl && envUrl.trim() !== '' && !envUrl.includes('localhost')) {
+    console.log("🔌 Connecting via env NEXT_PUBLIC_WS_URL:", envUrl);
+    return envUrl;
+  }
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+    const railwayWsUrl = "wss://aura-voice-agent-production-380e.up.railway.app/";
+    console.log("🔌 Connecting via Railway Production Fallback:", railwayWsUrl);
+    return railwayWsUrl;
+  }
+  console.log("🔌 Connecting via local default");
+  return "ws://localhost:3002";
+};
 const RECONNECT_DELAY = 3000;
 const MAX_RECONNECT_ATTEMPTS = 3;
 const END_CALL_SUMMARY_TIMEOUT_MS = 5000;
@@ -167,12 +180,13 @@ export function useVoiceAgent() {
     }
 
     try {
-      const ws = new WebSocket(WS_URL);
+      const ws = new WebSocket(getWsUrl());
       wsRef.current = ws;
       pendingOrderIdRef.current = orderId || 'ORD-101';
 
       ws.onopen = () => {
-        console.log('WebSocket connected');
+        console.log('✅ WebSocket connected to:', getWsUrl());
+        console.log('🔌 Connection event: OPEN');
         setConnectionError(null);
         reconnectAttemptsRef.current = 0;
         ws.send(JSON.stringify({ type: 'start_call', orderId: pendingOrderIdRef.current }));
@@ -284,11 +298,13 @@ export function useVoiceAgent() {
       };
 
       ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+        console.error('❌ WebSocket error:', error);
+        console.log('🔌 Connection event: ERROR');
         setConnectionError('Connection error. Attempting to reconnect...');
       };
 
       ws.onclose = (event) => {
+        console.log('🔌 Connection event: CLOSED — code:', event.code, '| reason:', event.reason);
         console.log('WebSocket closed', event.code, event.reason);
 
         if (callIntervalRef.current) {
