@@ -9,11 +9,11 @@
     "dev": "ts-node-dev index.ts"
   },
   "dependencies": {
-    "@deepgram/sdk": "^3.0.0",
+    "@deepgram/sdk": "^5.12.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",
     "express": "^4.18.2",
-    "msedge-tts": "^1.2.1",
+    "msedge-tts": "^2.0.8",
     "openai": "^4.28.0",
     "ws": "^8.16.0"
   },
