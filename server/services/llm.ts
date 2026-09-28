@@ -3,7 +3,7 @@ import type { ChatCompletionAssistantMessageParam, ChatCompletionMessage, ChatCo
 import { checkReturnEligibility, getOrderDetails } from '../data/orders';
 import { SYSTEM_PROMPT } from '../prompts/system-prompt';
 
-const MODEL = 'llama-3.3-70b-versatile';
+const MODEL = 'openai/gpt-oss-120b';
 const FALLBACK_RESPONSE = "I'm experiencing a brief connection delay. How else can I help you with Aura Skincare?";
 const MAX_TOOL_ROUNDS = 3;
 const MAX_HISTORY_MESSAGES = 60;
@@ -151,7 +151,7 @@ export async function getResponse(userMessage: string, conversationHistory: Chat
 }
 
 export async function generateSummary(
-  conversationHistory: ChatCompletionMessageParam[] | Array<{ speaker: string; text: string }>,
+  conversationHistory: ChatCompletionMessageParam[] | Array<{ speaker: string; text: string; timestamp?: number }>,
   _durationSeconds?: number
 ): Promise<Record<string, unknown>> {
   // The summary request must return ONLY a valid JSON object.
