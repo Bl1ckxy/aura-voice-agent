@@ -59,10 +59,9 @@ export class DeepgramSTT {
         socket.on('message', (data: any) => {
           if (data.channel?.alternatives?.length > 0) {
             const transcript = data.channel.alternatives[0].transcript;
-            const isFinal = Boolean(data.is_final);
-            const speechFinal = Boolean(data.speech_final);
+            const isFinal = data.is_final;
+            const speechFinal = data.speech_final ?? isFinal;
             if (transcript && this.onTranscriptCallback) {
-              console.log(`[Deepgram STT] "${transcript}" (isFinal: ${isFinal}, speechFinal: ${speechFinal})`);
               this.onTranscriptCallback(transcript, isFinal, speechFinal);
             }
           }
@@ -112,15 +111,9 @@ export class DeepgramSTT {
     for (const chunk of queued) this.sendAudio(chunk);
   }
 
-  private chunkCount: number = 0;
-
   sendAudio(chunk: Buffer): void {
     if (this.connection && this.connected) {
       try {
-        this.chunkCount++;
-        if (this.chunkCount === 1 || this.chunkCount % 50 === 0) {
-          console.log(`[Deepgram STT] Forwarded audio chunk #${this.chunkCount} (${chunk.length} bytes)`);
-        }
         this.connection.sendMedia(chunk);
       } catch (error) {
         console.error('Deepgram STT sendAudio failed:', error);

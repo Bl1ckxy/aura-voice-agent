@@ -12,27 +12,22 @@ export function useAudioPlayer() {
 
   const ensureAudioContext = useCallback(() => {
     if (!audioContextRef.current) {
-      audioContextRef.current = new AudioContext();
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      audioContextRef.current = new AudioCtx();
     }
     return audioContextRef.current;
   }, []);
 
-  const playAudio = useCallback(async (buffer: ArrayBuffer) => {
+  // Unlock AudioContext directly during user click gesture (Start Call)
+  const initAudio = useCallback(async () => {
     try {
       const ctx = ensureAudioContext();
       if (ctx.state === 'suspended') {
         await ctx.resume();
-      }
-      
-      playQueueRef.current.push(buffer);
-      
-      if (!isPlayingRef.current) {
-        isPlayingRef.current = true;
-        setIsPlaying(true);
-        processQueue(ctx);
+        console.log('🔊 AudioContext unlocked successfully!');
       }
     } catch (error) {
-      console.error('Failed to play audio:', error);
+      console.error('Failed to initialize AudioContext:', error);
     }
   }, [ensureAudioContext]);
 
@@ -40,6 +35,10 @@ export function useAudioPlayer() {
     while (playQueueRef.current.length > 0) {
       const buffer = playQueueRef.current.shift()!;
       try {
+        if (ctx.state === 'suspended') {
+          await ctx.resume();
+        }
+        
         const audioBuffer = await ctx.decodeAudioData(buffer.slice(0));
         const source = ctx.createBufferSource();
         source.buffer = audioBuffer;
@@ -54,7 +53,7 @@ export function useAudioPlayer() {
           };
         });
       } catch (error) {
-        console.error('Failed to decode audio:', error);
+        console.error('Failed to decode/play audio chunk:', error);
         currentSourceRef.current = null;
       }
     }
@@ -67,32 +66,41 @@ export function useAudioPlayer() {
     }
   };
 
+  const playAudio = useCallback(async (buffer: ArrayBuffer) => {
+    try {
+      const ctx = ensureAudioContext();
+      playQueueRef.current.push(buffer);
+      
+      if (!isPlayingRef.current) {
+        isPlayingRef.current = true;
+        setIsPlaying(true);
+        processQueue(ctx);
+      }
+    } catch (error) {
+      console.error('Failed to play audio:', error);
+    }
+  }, [ensureAudioContext]);
+
   const stopAudio = useCallback(() => {
     // 1. Clear the playback queue immediately
     playQueueRef.current = [];
     
-    // 2. Stop the currently playing source node instantly (no fade)
+    // 2. Stop the currently playing source node instantly
     if (currentSourceRef.current) {
       try {
         currentSourceRef.current.stop();
         currentSourceRef.current.disconnect();
       } catch (error) {
-        // Source might already be stopped/ended
         console.debug('Error stopping audio source:', error);
       }
       currentSourceRef.current = null;
     }
     
-    // 3. Reset playing state
+    // 3. Reset playing state (DO NOT suspend AudioContext, so next audio plays instantly!)
     isPlayingRef.current = false;
     setIsPlaying(false);
     
-    // 4. Suspend audio context to ensure no residual playback
-    if (audioContextRef.current && audioContextRef.current.state === 'running') {
-      audioContextRef.current.suspend();
-    }
-    
-    // 5. Call the completion callback so the agent knows playback was interrupted
+    // 4. Call the completion callback so the agent knows playback was interrupted
     if (onPlaybackCompleteRef.current) {
       onPlaybackCompleteRef.current();
     }
@@ -103,6 +111,7 @@ export function useAudioPlayer() {
   }, []);
 
   return {
+    initAudio,
     playAudio,
     stopAudio,
     isPlaying,

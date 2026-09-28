@@ -4,26 +4,22 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { useAudioRecorder } from './useAudioRecorder';
 import { useAudioPlayer } from './useAudioPlayer';
 
-const sanitizeWsUrl = (url: string): string => {
-  let cleaned = url.trim().replace(/^wss:\/\//, '').replace(/^https:\/\//, '').replace(/^http:\/\//, '').replace(/^ws:\/\//, '');
-  return `wss://${cleaned}`;
-};
-
 const getWsUrl = () => {
   const envUrl = process.env.NEXT_PUBLIC_WS_URL;
   if (envUrl && envUrl.trim() !== '' && !envUrl.includes('localhost')) {
-    const wsUrl = sanitizeWsUrl(envUrl);
-    console.log("🔌 Connecting via env NEXT_PUBLIC_WS_URL:", wsUrl);
-    return wsUrl;
+    console.log("🔌 Connecting via env NEXT_PUBLIC_WS_URL:", envUrl);
+    return envUrl;
   }
   if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
-    const railwayWsUrl = "wss://aura-voice-agent-production-380e.up.railway.app/";
+    // Fixed: Removed trailing slash
+    const railwayWsUrl = "wss://aura-voice-agent-production-380e.up.railway.app";
     console.log("🔌 Connecting via Railway Production Fallback:", railwayWsUrl);
     return railwayWsUrl;
   }
   console.log("🔌 Connecting via local default");
   return "ws://localhost:3002";
 };
+
 const RECONNECT_DELAY = 3000;
 const MAX_RECONNECT_ATTEMPTS = 3;
 const END_CALL_SUMMARY_TIMEOUT_MS = 5000;
@@ -66,7 +62,8 @@ export function useVoiceAgent() {
     setBargeInEnabled
   } = useAudioRecorder();
 
-  const { playAudio, stopAudio, isPlaying, onPlaybackComplete } = useAudioPlayer();
+  // Make sure useAudioPlayer exposes resumeAudio or initAudio
+  const { playAudio, stopAudio, isPlaying, onPlaybackComplete, initAudio } = useAudioPlayer();
 
   const sendAudioToServer = useCallback((chunk: ArrayBuffer) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -99,7 +96,6 @@ export function useVoiceAgent() {
     }
   }, []);
 
-  // Stop barge-in monitoring
   const stopBargeInMonitoring = useCallback(() => {
     if (bargeInCheckIntervalRef.current) {
       clearInterval(bargeInCheckIntervalRef.current);
@@ -113,48 +109,38 @@ export function useVoiceAgent() {
 
   const handleBargeIn = useCallback(() => {
     console.log('[Barge-in] Detected! Volume threshold exceeded for 300ms+');
-
-    // 1. Stop AI audio playback immediately
     stopAudio();
 
-    // 2. Send barge_in message to backend
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'barge_in' }));
     }
 
-    // 3. Stop barge-in monitoring (audio playback stops via the completion callback)
     stopBargeInMonitoring();
   }, [stopAudio, stopBargeInMonitoring]);
 
-  // Start barge-in monitoring during AI speaking
   const startBargeInMonitoring = useCallback(() => {
-    if (bargeInCheckIntervalRef.current) return; // Already running
+    if (bargeInCheckIntervalRef.current) return;
 
     setBargeInEnabled(true);
     bargeInActiveRef.current = true;
     isBargeInTriggeredRef.current = false;
     volumeThresholdCountRef.current = 0;
 
-    // Check volume every 25ms (~40fps)
-    // Threshold: volume > 40 for ~300ms (12 consecutive frames)
     bargeInCheckIntervalRef.current = setInterval(() => {
       const volume = getVolumeLevel();
 
       if (volume > 40) {
         volumeThresholdCountRef.current += 1;
-        // 12 frames * 25ms = 300ms sustained volume
         if (volumeThresholdCountRef.current >= 12 && !isBargeInTriggeredRef.current) {
           isBargeInTriggeredRef.current = true;
           handleBargeIn();
         }
       } else {
-        // Reset counter if volume drops below threshold
         volumeThresholdCountRef.current = 0;
       }
     }, 25);
   }, [getVolumeLevel, setBargeInEnabled, handleBargeIn]);
 
-  // When queued playback finishes normally, return to listening state.
   useEffect(() => {
     onPlaybackComplete(() => {
       audioPlayingRef.current = false;
@@ -166,7 +152,6 @@ export function useVoiceAgent() {
   const connect = useCallback(async (orderId?: string) => {
     if (isIntentionalCloseRef.current) return;
 
-    // Clean up any previous attempt before opening a new socket.
     if (wsRef.current) {
       const oldWs = wsRef.current;
       oldWs.onopen = null;
@@ -186,20 +171,21 @@ export function useVoiceAgent() {
     }
 
     try {
-      const ws = new WebSocket(getWsUrl());
+      const targetUrl = getWsUrl();
+      const ws = new WebSocket(targetUrl);
+      
+      // FIX 2: Explicitly request ArrayBuffer for binary WebSocket messages
+      ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
       pendingOrderIdRef.current = orderId || 'ORD-101';
 
       ws.onopen = () => {
-        console.log('✅ WebSocket connected to:', getWsUrl());
-        console.log('🔌 Connection event: OPEN');
+        console.log('✅ WebSocket connected to:', targetUrl);
         setConnectionError(null);
         reconnectAttemptsRef.current = 0;
         ws.send(JSON.stringify({ type: 'start_call', orderId: pendingOrderIdRef.current }));
         setCallState('listening');
 
-        // Send-policy refs are read at capture time so audio gating never
-        // depends on a stale React state closure.
         startRecording((chunk) => {
           if (!audioPlayingRef.current || bargeInActiveRef.current) {
             sendAudioToServer(chunk);
@@ -231,8 +217,6 @@ export function useVoiceAgent() {
                 startBargeInMonitoring();
               } else if (message.state === 'listening') {
                 if (audioPlayingRef.current) {
-                  // Defer: applied by the playback-complete callback so the
-                  // UI never shows "listening" while the agent is audible.
                   break;
                 }
                 setCallState('listening');
@@ -293,25 +277,23 @@ export function useVoiceAgent() {
               break;
           }
         } else if (data instanceof ArrayBuffer || data instanceof Blob) {
-          // AI is speaking: play the audio and monitor for interruptions.
           audioPlayingRef.current = true;
           setCallState('speaking');
           startBargeInMonitoring();
 
           const buffer = data instanceof Blob ? await data.arrayBuffer() : data;
+          console.log("🔊 Received audio buffer size:", buffer.byteLength);
           await playAudio(buffer);
         }
       };
 
       ws.onerror = (error) => {
         console.error('❌ WebSocket error:', error);
-        console.log('🔌 Connection event: ERROR');
         setConnectionError('Connection error. Attempting to reconnect...');
       };
 
       ws.onclose = (event) => {
-        console.log('🔌 Connection event: CLOSED — code:', event.code, '| reason:', event.reason);
-        console.log('WebSocket closed', event.code, event.reason);
+        console.log('🔌 Connection CLOSED — code:', event.code, '| reason:', event.reason);
 
         if (callIntervalRef.current) {
           clearInterval(callIntervalRef.current);
@@ -355,12 +337,16 @@ export function useVoiceAgent() {
     clearEndCallTimeout
   ]);
 
+  // FIX 1: Unlock AudioContext directly during user click
   const startCall = useCallback(async (orderId?: string) => {
+    if (initAudio) {
+      await initAudio(); // Unlocks Web Audio API on click!
+    }
     isIntentionalCloseRef.current = false;
     reconnectAttemptsRef.current = 0;
     setCallDuration(0);
     await connect(orderId);
-  }, [connect]);
+  }, [connect, initAudio]);
 
   const endCall = useCallback(() => {
     isIntentionalCloseRef.current = true;
@@ -369,8 +355,6 @@ export function useVoiceAgent() {
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'end_call' }));
-      // Wait for the server's call_ended (with summary) before closing;
-      // close after a bounded delay if it never arrives.
       endCallTimeoutRef.current = setTimeout(() => {
         endCallTimeoutRef.current = null;
         closeSocket();
