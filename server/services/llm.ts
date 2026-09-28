@@ -3,7 +3,7 @@ import type { ChatCompletionAssistantMessageParam, ChatCompletionMessage, ChatCo
 import { checkReturnEligibility, getOrderDetails } from '../data/orders';
 import { SYSTEM_PROMPT } from '../prompts/system-prompt';
 
-const MODEL = 'openai/gpt-oss-120b';
+const MODEL = 'llama-3.3-70b-versatile';
 const FALLBACK_RESPONSE = "I'm experiencing a brief connection delay. How else can I help you with Aura Skincare?";
 const MAX_TOOL_ROUNDS = 3;
 const MAX_HISTORY_MESSAGES = 60;

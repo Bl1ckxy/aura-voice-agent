@@ -1,15 +1,15 @@
-import { createClient, LiveTranscriptionEvents } from '@deepgram/sdk';
+import { DeepgramClient } from '@deepgram/sdk';
 
-let deepgramClient: ReturnType<typeof createClient> | null = null;
+let deepgramClient: DeepgramClient | null = null;
 
-function getDeepgramClient() {
+function getDeepgramClient(): DeepgramClient {
   if (!deepgramClient) {
     const apiKey = process.env.DEEPGRAM_API_KEY || '';
     if (!apiKey) {
       console.error('❌ DEEPGRAM_API_KEY is missing in environment variables!');
       throw new Error('DEEPGRAM_API_KEY not set in environment');
     }
-    deepgramClient = createClient(apiKey);
+    deepgramClient = new DeepgramClient({ apiKey });
   }
   return deepgramClient;
 }
@@ -28,30 +28,29 @@ export class DeepgramSTT {
 
   start(): void {
     this.stopped = false;
-    this.connect();
+    void this.connect();
   }
 
-  private connect(): void {
+  private async connect(): Promise<void> {
     if (this.stopped) return;
 
     try {
       const dg = getDeepgramClient();
 
-      // Deepgram SDK v3 live streaming method
-      const liveConnection = dg.listen.live({
+      const socket = await dg.listen.v1.connect({
         model: 'nova-2',
-        smart_format: true,
-        interim_results: true,
-        endpointing: 500,
+        smart_format: 'true',
+        interim_results: 'true',
+        endpointing: '500',
         encoding: 'linear16',
-        sample_rate: 16000,
+        sample_rate: '16000',
       });
 
-      this.connection = liveConnection;
+      this.connection = socket;
 
-      liveConnection.on(LiveTranscriptionEvents.Open, () => {
+      socket.on('open', () => {
         if (this.stopped) {
-          try { liveConnection.finish(); } catch { /* ignore */ }
+          try { socket.close(); } catch { /* ignore */ }
           return;
         }
         this.connected = true;
@@ -60,8 +59,8 @@ export class DeepgramSTT {
         this.flushPendingAudio();
       });
 
-      liveConnection.on(LiveTranscriptionEvents.Transcript, (data: any) => {
-        if (data.channel?.alternatives?.length > 0) {
+      socket.on('message', (data: any) => {
+        if (data?.type === 'Results' && data.channel?.alternatives?.length > 0) {
           const transcript = data.channel.alternatives[0].transcript;
           const isFinal = Boolean(data.is_final);
           const speechFinal = Boolean(data.speech_final ?? isFinal);
@@ -72,12 +71,12 @@ export class DeepgramSTT {
         }
       });
 
-      liveConnection.on(LiveTranscriptionEvents.Error, (error: any) => {
+      socket.on('error', (error: any) => {
         console.error('❌ Deepgram STT error:', error);
       });
 
-      liveConnection.on(LiveTranscriptionEvents.Close, () => {
-        if (this.connection !== liveConnection) return;
+      socket.on('close', () => {
+        if (this.connection !== socket) return;
         this.connected = false;
         this.connection = null;
         console.warn('🎤 Deepgram STT connection closed');
@@ -101,7 +100,7 @@ export class DeepgramSTT {
     console.log(`🔄 Deepgram STT reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      this.connect();
+      void this.connect();
     }, delay);
   }
 
@@ -116,7 +115,7 @@ export class DeepgramSTT {
   sendAudio(chunk: Buffer): void {
     if (this.connection && this.connected) {
       try {
-        this.connection.send(chunk);
+        this.connection.sendMedia(new Uint8Array(chunk));
       } catch (error) {
         console.error('Deepgram STT sendAudio failed:', error);
       }
@@ -141,7 +140,7 @@ export class DeepgramSTT {
     this.pendingAudio = [];
     if (this.connection) {
       try {
-        this.connection.finish();
+        this.connection.close();
       } catch (error) {
         console.error('Deepgram STT close failed:', error);
       }
