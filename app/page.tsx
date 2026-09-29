@@ -314,8 +314,8 @@ function CallSummaryView({ summary, transcript, onDownload, onNewCall, onToggleJ
         </span>
         <span className="inline-flex items-center px-3 py-1.5 text-sm bg-white border border-[var(--border)] rounded-lg">
           <span className="text-gray-500 mr-1">Status:</span>
-          <span className={`ml-1 font-medium ${summary.resolution_status === 'RESOLVED' ? 'text-green-700' : 'text-red-700'}`}>
-            {summary.resolution_status === 'RESOLVED' ? '✅ Resolved' : '❌ Unresolved'}
+          <span className={`ml-1 font-medium ${summary.resolution_status === 'RESOLVED' || summary.resolution_status === 'INFORMATION_PROVIDED' ? 'text-green-700' : 'text-red-700'}`}>
+            {summary.resolution_status === 'RESOLVED' || summary.resolution_status === 'INFORMATION_PROVIDED' ? '✅ Resolved' : '❌ Unresolved'}
           </span>
         </span>
         <span className="inline-flex items-center px-3 py-1.5 text-sm bg-white border border-[var(--border)] rounded-lg">

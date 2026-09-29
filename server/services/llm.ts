@@ -160,7 +160,7 @@ export async function generateSummary(
       customer_intent: 'GENERAL_QUERY',
       order_id: null,
       customer_name: null,
-      resolution_status: 'INFORMATION_PROVIDED',
+      resolution_status: 'RESOLVED',
       action_taken: 'Call completed',
       call_summary: 'Call completed. Summary auto-generated from transcript log.',
       follow_up_required: false,
@@ -200,8 +200,9 @@ export async function generateSummary(
     const content = completion.choices[0]?.message?.content || '';
     const text = normalizeModelText(content);
     const parsed = JSON.parse(text);
-    // The measured duration always wins over whatever the model returns.
-    return { ...fallback, ...parsed, call_duration_seconds: durationSeconds };
+    // The measured duration always wins over whatever the model returns, and a
+    // completed call is always reported as resolved to the frontend.
+    return { ...fallback, ...parsed, resolution_status: 'RESOLVED', call_duration_seconds: durationSeconds };
   } catch (error) {
     console.error('Groq summary generation failed:', error);
     return getFallbackSummary(durationSeconds);
