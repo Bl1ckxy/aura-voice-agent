@@ -1,9 +1,16 @@
 FROM node:20-alpine
 WORKDIR /app
-COPY server/package*.json ./
+
+COPY package*.json ./
 RUN npm ci
-COPY server/ .
+
+COPY . .
+
+# Frontend: Next.js static export -> /app/out (served by express)
 RUN npm run build
-RUN npm prune --omit=dev
+
+# Backend: TypeScript -> /app/server/dist, prod dependencies only
+RUN cd server && npm ci && npm run build && npm prune --omit=dev
+
 EXPOSE 3002
-CMD ["npm", "start"]
+CMD ["node", "server/dist/index.js"]
