@@ -1,5 +1,7 @@
 # AURA — Voice Support Agent for Aura Skincare
 
+**Live demo:** https://aura-voice-agent-production-380e.up.railway.app
+
 **Aria** is a real-time AI phone agent: you talk to it in English or Hinglish, it
 looks up orders, checks return/cancellation policy through tools, and talks back
 with a natural Indian voice — all inside the browser, with no telephony
@@ -44,7 +46,7 @@ structured summary.
 
 | Layer | Choice | Detail |
 |---|---|---|
-| Frontend | Next.js 14 · React 18 · Tailwind | Single-page call UI, live transcript, summary card |
+| Frontend | Next.js 14 · React 18 · Tailwind | Single-page call UI, static export (`output: 'export'`) served by the backend |
 | Realtime | Browser `WebSocket` ↔ `ws` | One socket, JSON control messages + raw binary audio |
 | Audio capture | **AudioWorklet** | `public/audio-processor.js`, 48 kHz → 16 kHz PCM16, transferable buffers |
 | STT | **Deepgram** `nova-2` | `linear16 @ 16 kHz`, interim results, `endpointing: 500ms`, `speech_final` gating |
@@ -53,6 +55,7 @@ structured summary.
 | TTS | **msedge-tts** `en-IN-NeerjaNeural` | 24 kHz/48 kbps MP3, Deepgram Aura-asteria as fallback, 7 s timeout per engine |
 | Summary | Groq JSON mode | `json_object` response format, measured duration always wins |
 | Server | Express + TypeScript | `server/` workspace, `tsc` → `dist/`, `ts-node-dev` in dev |
+| Deployment | Railway + Docker | Full-stack image (UI + API + WS), auto-deploy on push, `/health` check |
 | Tests | Vitest | 19 tests across 6 files (structural + live integration) |
 
 ### Why this stack?
@@ -94,16 +97,19 @@ npm start
 #    http://localhost:3000
 ```
 
-Production-style run:
+Production-style run (single process — the server also serves the UI):
 
 ```bash
+npm run build                   # next build -> out/ (static export)
 npm --prefix server run build   # tsc -> server/dist
-node server/dist/index.js       # voice server
-npm run build && npm start      # or next start for the frontend
+node server/dist/index.js       # UI + API + WebSocket on $PORT (default 3002)
+# open http://localhost:3002
 ```
 
 > `server/.env` is read by the voice server; the root `.env` is read by Next.
 > Both are git-ignored — only `.env.example` (placeholders) is committed.
+> The example ships the production WS URL — for local dev set
+> `NEXT_PUBLIC_WS_URL=ws://localhost:3002`.
 
 ---
 
@@ -113,6 +119,7 @@ npm run build && npm start      # or next start for the frontend
 |---|---|
 | `npm start` | `concurrently` → voice server (`ts-node-dev --respawn`) + `next dev` |
 | `npm run dev` | Next dev only |
+| `npm run build` | Static export → `out/` (what production serves) |
 | `npm run server` / `npm run frontend` | Run either half alone |
 | `npm test` | Full Vitest suite (structural always; integration runs when keys are present) |
 | `npm run test:watch` | Watch mode |
@@ -129,8 +136,9 @@ Client → server
 |---|---|---|
 | `start_call` | `{ orderId }` | Invalid ID → agent text reply, call stays open; duplicate is ignored (no STT leak) |
 | `end_call` | — | Server replies `call_ended` before the socket closes (client waits up to 5 s) |
-| `barge_in` | — | Marks the in-flight reply interrupted, current agent line gets `[interrupted]` |
-| *binary frame* | raw PCM16 | Routed to **this connection's** session only, never JSON-parsed |
+| `barge_in` | — | Marks the in-flight reply interrupted, current agent line gets `[interrupted]`; clears the server echo-mute window |
+| `playback_done` | — | Client finished playing agent audio; clears the server echo-mute window early |
+| *binary frame* | raw PCM16 | Routed to **this connection's** session only, never JSON-parsed; gated off while agent audio plays |
 
 Server → client
 
@@ -157,12 +165,17 @@ What the pipeline does when things go wrong:
   normalization (`ORD‑101` → `ORD-101`), a canned fallback reply on failure.
 - **Session** — responses serialized per session (no history races), unique
   session IDs, duplicate `start_call` rejected, re-entrancy guard on `endCall`.
-- **Echo** — fallback-phrase filter + word-overlap check against the last agent
-  line (the nudge text is registered as an agent line, so its own echo is
-  filtered too).
+- **Echo (agent hearing itself)** — four layers: (1) client send gate — no mic
+  frames leave the browser while agent audio plays; (2) a 600 ms mic cooldown
+  after playback for the reverb/system-audio tail; (3) `echoCancellation: true`
+  in `getUserMedia`; (4) a server-side `agentPlaybackUntil` mute window
+  (estimated speech duration) that drops customer finals until `playback_done`
+  arrives — `barge_in` clears it instantly. On top of those, the fallback-phrase
+  filter and the word-overlap check against the last agent line (the nudge is
+  registered as an agent line, so its own echo is filtered too).
 - **Summary** — measured `call_duration_seconds` is forced over whatever the
-  model returns; empty transcripts return the deterministic fallback without an
-  API call.
+  model returns, a completed call always reports `resolution_status: RESOLVED`,
+  and empty transcripts return the deterministic fallback without an API call.
 
 ---
 
@@ -190,6 +203,30 @@ Integration tests load `server/.env` automatically and skip when no key is set.
 
 ---
 
+## Deployment (Railway)
+
+One service serves everything — UI, REST and WebSocket:
+
+```
+push to main ─► Railway builds full-stack Dockerfile ─► /health check ─► live (~60 s)
+```
+
+- **Image** (`Dockerfile`): `npm ci` → `next build` (static export → `out/`) →
+  server `tsc` build → prune dev deps → `CMD node server/dist/index.js`.
+- **Express serves**: `out/` (UI), `public/` (AudioWorklet), `/health`,
+  `/api/self-test`, and the WebSocket on the same port (`PORT` is injected by
+  Railway — e.g. 8080).
+- **`railway.json`**: start command, `ON_FAILURE` restart (10 retries),
+  health check `/health`.
+- **Env vars** (service settings): `GROQ_API_KEY`, `DEEPGRAM_API_KEY`.
+  `NEXT_PUBLIC_WS_URL` is baked at *build* time and is empty inside the image,
+  so production browsers fall back to the constant in `getWsUrl()`
+  (`hooks/useVoiceAgent.ts`) — update that constant if you host elsewhere, or
+  pass `NEXT_PUBLIC_WS_URL` as a Docker build arg.
+- Every push to `main` rebuilds and redeploys automatically.
+
+---
+
 ## Project layout
 
 ```
@@ -208,6 +245,8 @@ AURA/
 │  ├─ data/orders.ts       # demo orders + spoken ID normalisation
 │  └─ prompts/system-prompt.ts  # Aria's policy + guardrails
 ├─ tests/                  # Vitest suites
+├─ Dockerfile              # full-stack image: static export + server
+├─ railway.json            # start command, restart policy, health check
 └─ vitest.config.ts
 ```
 
@@ -235,7 +274,12 @@ audio through the JS heap — is fiddly. Then barge-in: the threshold has to be
 high enough not to fire on TTS spill, sustained long enough (~300 ms) not to
 fire on a cough, and once it fires you must cancel playback, tell the server to
 discard TTS that is already generating, and resume the mic stream without a
-gap — or you eat your own audio as an echo.
+gap — or you eat your own audio as an echo. That last failure did bite in
+production: barge-in monitoring was opening the mic send gate during playback,
+so the agent transcribed its own voice and replied to itself. The shipped fix is
+layered — a send gate closed for the whole playback, a 600 ms cooldown for the
+reverb tail, browser AEC, and a server mute window closed by `playback_done`
+(details under *Reliability hardenings*).
 
 ### What would you improve with 1 more week?
 
@@ -273,7 +317,7 @@ as that grows.
 | `GROQ_API_KEY` | `server/.env` | LLM + summary |
 | `DEEPGRAM_API_KEY` | `server/.env` | STT and TTS fallback |
 | `PORT` | `server/.env` | Voice server port (default `3002`) |
-| `NEXT_PUBLIC_WS_URL` | root `.env` | Browser WebSocket target (default `ws://localhost:3002`) |
+| `NEXT_PUBLIC_WS_URL` | root `.env` (baked at build) | Browser WS target; local default `ws://localhost:3002`, production falls back to the `getWsUrl()` constant |
 
 Rotate any key that has ever been pasted into a chat, issue, or log.
 
