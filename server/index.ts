@@ -17,6 +17,9 @@ const wss = new WebSocketServer({ server: httpServer });
 
 app.use(cors());
 app.use(express.json());
+// Next.js static export (production). Built to /out at the repo root;
+// Railway runs the start command with cwd = repo root.
+app.use(express.static('out'));
 app.use(express.static('public'));
 
 app.get('/', (_req, res) => {
