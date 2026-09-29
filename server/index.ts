@@ -109,6 +109,7 @@ class VoiceAgentSession {
   wsRef: WebSocket | null = null;
   callStartTime: number = 0;
   lastAgentMessage: string = '';
+  agentPlaybackUntil: number = 0; // epoch ms; drop customer FINAL transcripts while Date.now() < this
 
   // Barge-in handling
   interrupted: boolean = false;
@@ -143,6 +144,7 @@ class VoiceAgentSession {
     this.callStartTime = Date.now();
     this.interrupted = false;
     this.nudgeCount = 0;
+    this.agentPlaybackUntil = 0;
 
     this.conversationHistory = await createChatSession();
 
@@ -169,13 +171,18 @@ class VoiceAgentSession {
         return;
       }
 
-      if (isEchoOfAgent(transcript, this.lastAgentMessage)) {
-        console.log('[Echo prevention] Ignoring echo of agent message:', transcript);
+      if (!isFinal || !speechFinal) {
+        safeSend(ws, JSON.stringify({ type: 'transcript', speaker: 'customer', text: transcript, isInterim: true }));
         return;
       }
 
-      if (!isFinal || !speechFinal) {
-        safeSend(ws, JSON.stringify({ type: 'transcript', speaker: 'customer', text: transcript, isInterim: true }));
+      if (Date.now() < this.agentPlaybackUntil) {
+        console.log(`[${this.logTag}][echo-guard] dropping final during agent playback: ${JSON.stringify(transcript)}`);
+        return; // do not call LLM
+      }
+
+      if (isEchoOfAgent(transcript, this.lastAgentMessage)) {
+        console.log('[Echo prevention] Ignoring echo of agent message:', transcript);
         return;
       }
 
@@ -275,6 +282,10 @@ class VoiceAgentSession {
           return;
         }
 
+        const estimatedDurationMs = Math.max(2000, response.split(/\s+/).length * 400);
+        this.agentPlaybackUntil = Date.now() + estimatedDurationMs;
+        console.log(`[${this.logTag}][echo-guard] TTS audio sent, mute window set for ${estimatedDurationMs}ms (until ${this.agentPlaybackUntil})`);
+
         safeSend(ws, Buffer.from(audioBuffer));
 
         this.transcript.push({ speaker: 'agent', text: response, timestamp: Date.now() });
@@ -299,6 +310,9 @@ class VoiceAgentSession {
 
   handleBargeIn(ws: WebSocket): void {
     if (!this.isCalling) return;
+
+    console.log(`[${this.logTag}][echo-guard] barge_in clearing agentPlaybackUntil (was ${this.agentPlaybackUntil})`);
+    this.agentPlaybackUntil = 0;
 
     console.log('[Barge-in] Server received barge_in, interrupting current response');
     this.interrupted = true;
@@ -342,6 +356,7 @@ class VoiceAgentSession {
     this.interrupted = false;
     this.isGeneratingTts = false;
     this.currentTtsPromise = null;
+    this.agentPlaybackUntil = 0;
   }
 }
 
@@ -409,6 +424,11 @@ wss.on('connection', (ws: WebSocket) => {
         }
         case 'barge_in': {
           session.handleBargeIn(ws);
+          break;
+        }
+        case 'playback_done': {
+          console.log(`[${clientId}][echo-guard] playback_done received, clearing agentPlaybackUntil (was ${session.agentPlaybackUntil})`);
+          session.agentPlaybackUntil = 0;
           break;
         }
       }

@@ -53,6 +53,8 @@ export function useVoiceAgent() {
   const isBargeInTriggeredRef = useRef(false);
   const bargeInActiveRef = useRef(false);
   const audioPlayingRef = useRef(false);
+  const micMutedUntilRef = useRef(0);
+  const lastGateBlockLogRef = useRef(0);
 
   const {
     startRecording,
@@ -109,7 +111,10 @@ export function useVoiceAgent() {
 
   const handleBargeIn = useCallback(() => {
     console.log('[Barge-in] Detected! Volume threshold exceeded for 300ms+');
+    isBargeInTriggeredRef.current = true;
     stopAudio();
+    micMutedUntilRef.current = 0;  // do NOT mute — user is speaking
+    audioPlayingRef.current = false;
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'barge_in' }));
@@ -132,7 +137,6 @@ export function useVoiceAgent() {
       if (volume > 40) {
         volumeThresholdCountRef.current += 1;
         if (volumeThresholdCountRef.current >= 12 && !isBargeInTriggeredRef.current) {
-          isBargeInTriggeredRef.current = true;
           handleBargeIn();
         }
       } else {
@@ -144,8 +148,21 @@ export function useVoiceAgent() {
   useEffect(() => {
     onPlaybackComplete(() => {
       audioPlayingRef.current = false;
+      const isBargeIn = isBargeInTriggeredRef.current;
+      if (isBargeIn) {
+        micMutedUntilRef.current = 0;
+        console.log('[mic-cooldown] barge-in: cooldown skipped');
+      } else {
+        micMutedUntilRef.current = Date.now() + 600;  // ~600ms reverb tail
+        console.log('[mic-cooldown] started: 600ms mute window');
+      }
       setCallState(prev => (prev === 'speaking' ? 'listening' : prev));
       stopBargeInMonitoring();
+
+      if (!isBargeIn && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        console.log('[playback] sending playback_done to server');
+        wsRef.current.send(JSON.stringify({ type: 'playback_done' }));
+      }
     });
   }, [onPlaybackComplete, stopBargeInMonitoring]);
 
@@ -185,10 +202,21 @@ export function useVoiceAgent() {
         reconnectAttemptsRef.current = 0;
         ws.send(JSON.stringify({ type: 'start_call', orderId: pendingOrderIdRef.current }));
         setCallState('listening');
+        micMutedUntilRef.current = 0;
+        audioPlayingRef.current = false;
 
         startRecording((chunk) => {
-          if (!audioPlayingRef.current || bargeInActiveRef.current) {
+          // Barge-in detection is LOCAL (AnalyserNode) — never open the send
+          // gate just because barge-in monitoring is active. That was feeding
+          // speaker output into Deepgram for the entire agent turn.
+          const now = Date.now();
+          if (!audioPlayingRef.current && now >= micMutedUntilRef.current) {
             sendAudioToServer(chunk);
+          } else if (now - lastGateBlockLogRef.current > 1000) {
+            lastGateBlockLogRef.current = now;
+            console.log(
+              `[mic-gate] audio chunk blocked (${audioPlayingRef.current ? 'audio playing' : `in cooldown, ${micMutedUntilRef.current - now}ms left`})`
+            );
           }
         });
         isRecordingRef.current = true;
@@ -306,6 +334,7 @@ export function useVoiceAgent() {
         stopAudio();
         stopBargeInMonitoring();
         audioPlayingRef.current = false;
+        micMutedUntilRef.current = 0;
 
         if (!isIntentionalCloseRef.current && reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
           reconnectAttemptsRef.current += 1;
@@ -374,6 +403,7 @@ export function useVoiceAgent() {
     }
     stopBargeInMonitoring();
     audioPlayingRef.current = false;
+    micMutedUntilRef.current = 0;
 
     setCallState('idle');
   }, [stopRecording, clearReconnectTimeout, clearEndCallTimeout, closeSocket, stopBargeInMonitoring]);
