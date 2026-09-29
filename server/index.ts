@@ -92,6 +92,9 @@ function isEchoOfAgent(text: string, lastAgentText: string): boolean {
 }
 
 class VoiceAgentSession {
+  logTag: string;
+  audioLogged: boolean = false;
+  interimLogged: boolean = false;
   stt: DeepgramSTT | null = null;
   conversationHistory: any[] = [];
   currentOrderId: string | null = null;
@@ -113,6 +116,10 @@ class VoiceAgentSession {
   isProcessing: boolean = false;
   nudgeCount: number = 0;
   private transcriptQueue: Promise<void> = Promise.resolve();
+
+  constructor(clientId: string) {
+    this.logTag = clientId;
+  }
 
   async startCall(ws: WebSocket, orderId: string): Promise<void> {
     if (this.isCalling) {
@@ -145,6 +152,14 @@ class VoiceAgentSession {
 
     this.stt.onTranscript((transcript: string, isFinal: boolean, speechFinal: boolean) => {
       if (!this.isCalling) return;
+
+      if (!this.interimLogged) {
+        this.interimLogged = true;
+        console.log(`[${this.logTag}] first STT result (isFinal=${isFinal}, speechFinal=${speechFinal}): ${JSON.stringify(transcript)}`);
+      }
+      if (isFinal) {
+        console.log(`[${this.logTag}] STT final (speechFinal=${speechFinal}): ${JSON.stringify(transcript)}`);
+      }
 
       if (isFallbackOrNudgeMessage(transcript)) {
         console.log('[Echo prevention] Ignoring transcribed fallback/nudge message:', transcript);
@@ -196,6 +211,7 @@ class VoiceAgentSession {
       const timeSinceLastTranscript = Date.now() - this.lastTranscriptTime;
       if (timeSinceLastTranscript >= SILENCE_TIMEOUT_MS && this.nudgeCount < MAX_NUDGES_PER_CALL) {
         this.nudgeCount++;
+        console.log(`[${this.logTag}] silence timeout, sending nudge #${this.nudgeCount}`);
         this.lastAgentMessage = NUDGE_MESSAGE;
         safeSend(ws, JSON.stringify({ type: 'nudge', text: NUDGE_MESSAGE }));
         this.lastTranscriptTime = Date.now();
@@ -219,12 +235,14 @@ class VoiceAgentSession {
 
     this.interrupted = false;
     this.isProcessing = true;
+    console.log(`[${this.logTag}] LLM request: ${JSON.stringify(transcript)}`);
 
     safeSend(ws, JSON.stringify({ type: 'state', state: 'thinking' }));
 
     try {
       const response = await getResponse(transcript, this.conversationHistory);
       if (!this.isCalling) return;
+      console.log(`[${this.logTag}] LLM response (${response.length} chars): ${JSON.stringify(response.slice(0, 120))}`);
 
       if (this.interrupted) {
         // Barge-in happened while we were thinking; do not speak over the customer.
@@ -294,6 +312,7 @@ class VoiceAgentSession {
 
   async endCall(ws: WebSocket, options: { summarize?: boolean } = {}): Promise<void> {
     const { summarize = true } = options;
+    console.log(`[${this.logTag}] endCall (summarize=${summarize})`);
 
     // Re-entrancy guard: only the first endCall for a live call does work.
     if (!this.isCalling && this.callStartTime === 0) return;
@@ -327,7 +346,7 @@ const sessions = new Map<string, VoiceAgentSession>();
 
 wss.on('connection', (ws: WebSocket) => {
   const clientId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  const session = new VoiceAgentSession();
+  const session = new VoiceAgentSession(clientId);
   sessions.set(clientId, session);
 
   console.log(`Client connected: ${clientId}`);
@@ -339,6 +358,10 @@ wss.on('connection', (ws: WebSocket) => {
     if (isBinary && Buffer.isBuffer(data)) {
       const sessionForWs = sessions.get(clientId);
       if (sessionForWs && sessionForWs.isCalling && sessionForWs.stt) {
+        if (!sessionForWs.audioLogged) {
+          sessionForWs.audioLogged = true;
+          console.log(`[${clientId}] first audio frame from client: ${data.length} bytes`);
+        }
         sessionForWs.stt.sendAudio(data);
       }
       return;
